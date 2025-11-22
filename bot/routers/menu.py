@@ -22,14 +22,23 @@ from services.xui_client import delete_xui_client
 
 from config import ADMINS, settings
 
+# ✅ для саппорта:
+from db.base import async_session
+from db.models import SupportTicket
+from security.memory_store import remember_support_user
 
 router = Router(name="menu")
+
+# ====================================================
+#                 КЛАВИАТУРЫ
+# ====================================================
 
 def main_menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Plus", callback_data="menu_plus")],
         [InlineKeyboardButton(text="Proxy", callback_data="menu_proxy")],
         [InlineKeyboardButton(text="Профиль", callback_data="menu_profile")],
+        # Кнопка поддержки → обработчик ниже в этом же файле
         [InlineKeyboardButton(text="Support", callback_data="menu_support")],
     ])
 
@@ -59,6 +68,94 @@ def proxy_menu_kb():
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="menu_home")],
     ])
 
+
+# ============================
+#     КЛАВИАТУРА SUPPORT MENU
+# ============================
+
+def support_menu_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Закрыть обращение", callback_data="support_close_user")],
+        # Назад → используем уже существующий handler menu_home в этом файле
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="menu_home")]
+    ])
+
+
+# ============================
+#     КНОПКА SUPPORT (меню)
+# ============================
+
+@router.callback_query(F.data == "menu_support")
+async def menu_support(call: CallbackQuery):
+    await call.answer()
+
+    real_id = call.from_user.id
+    user = await get_or_create_user(real_id)
+
+    # Пользователь ЯВНО открыл поддержку → запоминаем real_id
+    remember_support_user(user.fake_id, real_id)
+
+    # Ищем открытый тикет, если нет — создаём
+    async with async_session() as session:
+        from sqlalchemy import select
+
+        q = select(SupportTicket).where(
+            SupportTicket.user_id == user.id,
+            SupportTicket.is_open.is_(True),
+        )
+        res = await session.execute(q)
+        ticket = res.scalars().first()
+
+        new_ticket_created = False
+        if not ticket:
+            ticket = SupportTicket(user_id=user.id, is_open=True)
+            session.add(ticket)
+            await session.commit()
+            await session.refresh(ticket)
+            new_ticket_created = True
+
+    text = (
+        "🛠 <b>Поддержка</b>\n\n"
+        "Опишите вашу проблему в сообщении.\n"
+        "Ваши сообщения будут отправлены администратору.\n\n"
+        "Если вопрос решён — закройте обращение кнопкой ниже."
+    )
+
+    # Аккуратно редактируем в зависимости от типа сообщения
+    try:
+        if call.message.text:
+            # Обычное текстовое сообщение
+            await call.message.edit_text(text, reply_markup=support_menu_kb())
+        elif call.message.caption:
+            # Сообщение с фото/медиа и подписью
+            await call.message.edit_caption(
+                caption=text,
+                reply_markup=support_menu_kb()
+            )
+        else:
+            # На всякий случай — отправим новое сообщение
+            await call.message.answer(text, reply_markup=support_menu_kb())
+    except Exception:
+        # Если редактирование по каким-то причинам не удалось, просто шлём новое
+        await call.message.answer(text, reply_markup=support_menu_kb())
+
+    # Уведомляем админов только при создании нового тикета
+    if new_ticket_created:
+        text_admin = f"""📩 Обращение в поддержку
+FAKE ID: {user.fake_id}
+Ticket ID: {ticket.id}
+"""
+        for admin_id in settings.ADMINS:
+            try:
+                await call.message.bot.send_message(admin_id, text_admin)
+            except Exception:
+                pass
+
+
+# ====================================================
+# /start
+# ====================================================
+
 @router.message(F.text == "/start")
 async def cmd_start(message: Message):
     user = await get_or_create_user(message.from_user.id)
@@ -77,6 +174,11 @@ async def cmd_start(message: Message):
 
     await message.answer_photo(photo, caption=text, reply_markup=main_menu_kb())
 
+
+# ====================================================
+# PLUS
+# ====================================================
+
 @router.callback_query(F.data == "menu_plus")
 async def menu_plus(call: CallbackQuery):
     await call.answer()
@@ -92,6 +194,11 @@ async def menu_plus(call: CallbackQuery):
 
     await call.message.answer_photo(photo, caption=text, reply_markup=plus_menu_kb())
     await call.message.delete()
+
+
+# ====================================================
+# ПРОКСИ
+# ====================================================
 
 @router.callback_query(F.data == "menu_proxy")
 async def menu_proxy(call: CallbackQuery):
@@ -109,6 +216,11 @@ async def menu_proxy(call: CallbackQuery):
     await call.message.answer_photo(photo, caption=text, reply_markup=proxy_menu_kb())
     await call.message.delete()
 
+
+# ====================================================
+# ПОКУПКА PLUS (Stars)
+# ====================================================
+
 @router.callback_query(F.data == "menu_buy_plus")
 async def menu_buy_plus(call: CallbackQuery):
     await call.answer()
@@ -119,14 +231,24 @@ async def menu_buy_plus(call: CallbackQuery):
         title=f"Kynix VPN — {tariff.title}",
         description=tariff.description,
         payload="vpn_plus",
-        provider_token="", 
+        provider_token="",  # Stars → token НЕ нужен
         currency="XTR",
         prices=build_prices(tariff),
     )
 
+
+# ====================================================
+# Перед оплатой
+# ====================================================
+
 @router.pre_checkout_query()
 async def process_pre_checkout_query(pre_checkout_q: PreCheckoutQuery):
     await pre_checkout_q.answer(ok=True)
+
+
+# ====================================================
+# Успешная оплата
+# ====================================================
 
 @router.message(F.successful_payment)
 async def process_successful_payment(message: Message):
@@ -139,6 +261,11 @@ async def process_successful_payment(message: Message):
         user=user,
         tariff=tariff
     )
+
+
+# ====================================================
+# ПРОФИЛЬ
+# ====================================================
 
 @router.callback_query(F.data == "menu_profile")
 async def menu_profile(call: CallbackQuery):
@@ -167,6 +294,11 @@ async def menu_profile(call: CallbackQuery):
     await call.message.answer_photo(photo, caption=text, reply_markup=profile_menu_kb())
     await call.message.delete()
 
+
+# ====================================================
+# INFINITE /inf
+# ====================================================
+
 @router.message(F.text.startswith("/inf"))
 async def cmd_inf(message: Message):
     if message.from_user.id not in ADMINS:
@@ -189,8 +321,14 @@ async def cmd_inf(message: Message):
         f"<code>{sub.xui_config}</code>"
     )
 
+
+# ====================================================
+# REFUND /refund FAKE_ID REAL_ID CHARGE_ID
+# ====================================================
+
 @router.message(F.text.startswith("/refund"))
 async def cmd_refund(message: Message):
+    # Только админы
     if message.from_user.id not in ADMINS:
         return await message.answer("❌ У вас нет прав.")
 
@@ -201,6 +339,7 @@ async def cmd_refund(message: Message):
             "<code>/refund FAKE_ID REAL_ID CHARGE_ID</code>"
         )
 
+    # --- Парсим аргументы ---
     try:
         fake_id = int(parts[1])
         real_id = int(parts[2])
@@ -209,19 +348,23 @@ async def cmd_refund(message: Message):
 
     charge_id = parts[3]
 
+    # --- Ищем пользователя по FAKE_ID ---
     user = await get_user_by_fakeid(fake_id)
     if not user:
         return await message.answer("❌ Пользователь с таким FAKE_ID не найден.")
 
+    # --- Берём его последнюю подписку ---
     sub = await get_user_last_subscription(user.id)
     if not sub or not sub.active:
         return await message.answer("❌ У пользователя нет активной подписки.")
 
+    # --- Определяем inbound для удаления конфига ---
     if getattr(sub, "expires_at", None) is None:
         inbound_id = int(settings.XUI_INBOUND_ID_INF)
     else:
         inbound_id = int(settings.XUI_INBOUND_ID)
 
+    # --- Удаляем конфиг в X-UI по FAKE_ID (email = fake_id) ---
     try:
         await delete_xui_client(email=str(fake_id), inbound_id=inbound_id)
     except Exception as e:
@@ -230,8 +373,10 @@ async def cmd_refund(message: Message):
             f"<code>{e}</code>"
         )
 
+    # --- Деактивируем подписки в БД ---
     await deactivate_user_subscriptions(user.id)
 
+    # --- Возврат Stars по REAL_ID ---
     result = await refund_stars(
         user_id=real_id,
         charge_id=charge_id
@@ -250,6 +395,11 @@ async def cmd_refund(message: Message):
             "❌ Telegram отклонил возврат:\n"
             f"<code>{desc}</code>"
         )
+
+
+# ====================================================
+# НАЗАД В МЕНЮ
+# ====================================================
 
 @router.callback_query(F.data == "menu_home")
 async def menu_home(call: CallbackQuery):

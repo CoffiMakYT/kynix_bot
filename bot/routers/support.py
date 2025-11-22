@@ -2,7 +2,7 @@ from datetime import datetime
 
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery
 
 from config import settings
 from db.base import async_session
@@ -13,75 +13,16 @@ from security.memory_store import remember_support_user, forget_support_user, ge
 router = Router(name="support")
 
 
-def support_menu_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Закрыть обращение", callback_data="support_close_user")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="menu_home")]
-    ])
-
-@router.callback_query(F.data == "menu_support")
-async def menu_support(call: CallbackQuery):
-    await call.answer()
-
-    real_id = call.from_user.id
-    user = await get_or_create_user(real_id)
-
-    remember_support_user(user.fake_id, real_id)
-
-    async with async_session() as session:
-        from sqlalchemy import select
-
-        q = select(SupportTicket).where(
-            SupportTicket.user_id == user.id,
-            SupportTicket.is_open.is_(True),
-        )
-        res = await session.execute(q)
-        ticket = res.scalars().first()
-
-        new_ticket_created = False
-        if not ticket:
-            ticket = SupportTicket(user_id=user.id, is_open=True)
-            session.add(ticket)
-            await session.commit()
-            await session.refresh(ticket)
-            new_ticket_created = True
-
-    text = (
-        "🛠 <b>Поддержка</b>\n\n"
-        "Опишите вашу проблему в сообщении.\n"
-        "Ваши сообщения будут отправлены администратору.\n\n"
-        "Если вопрос решён — закройте обращение кнопкой ниже."
-    )
-
-    try:
-        if call.message.text:
-            await call.message.edit_text(text, reply_markup=support_menu_kb())
-        elif call.message.caption:
-            await call.message.edit_caption(
-                caption=text,
-                reply_markup=support_menu_kb()
-            )
-        else:
-            await call.message.answer(text, reply_markup=support_menu_kb())
-    except Exception:
-        await call.message.answer(text, reply_markup=support_menu_kb())
-
-    if new_ticket_created:
-        text_admin = f"""📩 Обращение в поддержку
-FAKE ID: {user.fake_id}
-Ticket ID: {ticket.id}
-"""
-        for admin_id in settings.ADMINS:
-            try:
-                await call.message.bot.send_message(admin_id, text_admin)
-            except Exception:
-                pass
+# ============================
+#     КОМАНДА /support
+# ============================
 
 @router.message(Command("support"))
 async def cmd_support(message: Message):
     real_id = message.from_user.id
     user = await get_or_create_user(real_id)
 
+    # ЯВНО обратился через команду → запоминаем real_id
     remember_support_user(user.fake_id, real_id)
 
     async with async_session() as session:
@@ -102,6 +43,11 @@ Ticket ID: {ticket.id}
             await message.bot.send_message(admin_id, text_admin)
         except Exception:
             pass
+
+
+# ============================
+#     КНОПКА «ЗАКРЫТЬ» (support_close_user)
+# ============================
 
 @router.callback_query(F.data == "support_close_user")
 async def support_close_user(call: CallbackQuery):
@@ -133,6 +79,8 @@ async def support_close_user(call: CallbackQuery):
 
         await session.commit()
 
+    # После закрытия тикета забываем real_id → следующие сообщения будут игнорироваться,
+    # пока юзер снова не откроет поддержку
     forget_support_user(user.fake_id)
 
     try:
@@ -146,6 +94,11 @@ async def support_close_user(call: CallbackQuery):
             "Ваше обращение закрыто.\n"
             "Если появятся новые вопросы — вы можете снова открыть поддержку."
         )
+
+
+# ============================
+#     ЗАКРЫТИЕ АДМИНОМ /close (в ответ на тикет)
+# ============================
 
 @router.message(Command("close"), F.reply_to_message)
 async def cmd_close_ticket(message: Message):
@@ -196,8 +149,13 @@ async def cmd_close_ticket(message: Message):
     await message.answer(f"Тикет пользователя {fake_id} закрыт.")
 
 
+# ============================
+#     ОСНОВНАЯ ЛОГИКА СООБЩЕНИЙ
+# ============================
+
 @router.message()
 async def support_messages(message: Message):
+    # --- ответ администратора пользователю
     if message.from_user.id in settings.ADMINS and message.reply_to_message:
         replied = message.reply_to_message
 
@@ -223,10 +181,13 @@ async def support_messages(message: Message):
 
         return
 
+    # --- пользователь пишет в поддержку (любой текст, не команда)
     if message.text and not message.text.startswith("/"):
         real_id = message.from_user.id
         user = await get_or_create_user(real_id)
 
+        # Если пользователь НЕ открывал поддержку (нет записи в memory_store),
+        # то просто игнорируем его сообщение.
         if get_real_id(user.fake_id) is None:
             return
 
@@ -260,3 +221,5 @@ Ticket ID: {ticket.id}
                 await message.bot.send_message(admin_id, text_admin)
             except Exception:
                 pass
+
+        await message.answer("Ваше сообщение отправлено в поддержку ✅")
