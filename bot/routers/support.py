@@ -13,16 +13,11 @@ from security.memory_store import remember_support_user, forget_support_user, ge
 router = Router(name="support")
 
 
-# ============================
-#     КОМАНДА /support
-# ============================
-
 @router.message(Command("support"))
 async def cmd_support(message: Message):
     real_id = message.from_user.id
     user = await get_or_create_user(real_id)
 
-    # ЯВНО обратился через команду → запоминаем real_id
     remember_support_user(user.fake_id, real_id)
 
     async with async_session() as session:
@@ -44,10 +39,6 @@ Ticket ID: {ticket.id}
         except Exception:
             pass
 
-
-# ============================
-#     КНОПКА «ЗАКРЫТЬ» (support_close_user)
-# ============================
 
 @router.callback_query(F.data == "support_close_user")
 async def support_close_user(call: CallbackQuery):
@@ -79,8 +70,6 @@ async def support_close_user(call: CallbackQuery):
 
         await session.commit()
 
-    # После закрытия тикета забываем real_id → следующие сообщения будут игнорироваться,
-    # пока юзер снова не откроет поддержку
     forget_support_user(user.fake_id)
 
     try:
@@ -95,10 +84,6 @@ async def support_close_user(call: CallbackQuery):
             "Если появятся новые вопросы — вы можете снова открыть поддержку."
         )
 
-
-# ============================
-#     ЗАКРЫТИЕ АДМИНОМ /close (в ответ на тикет)
-# ============================
 
 @router.message(Command("close"), F.reply_to_message)
 async def cmd_close_ticket(message: Message):
@@ -149,13 +134,8 @@ async def cmd_close_ticket(message: Message):
     await message.answer(f"Тикет пользователя {fake_id} закрыт.")
 
 
-# ============================
-#     ОСНОВНАЯ ЛОГИКА СООБЩЕНИЙ
-# ============================
-
 @router.message()
 async def support_messages(message: Message):
-    # --- ответ администратора пользователю
     if message.from_user.id in settings.ADMINS and message.reply_to_message:
         replied = message.reply_to_message
 
@@ -181,13 +161,10 @@ async def support_messages(message: Message):
 
         return
 
-    # --- пользователь пишет в поддержку (любой текст, не команда)
     if message.text and not message.text.startswith("/"):
         real_id = message.from_user.id
         user = await get_or_create_user(real_id)
 
-        # Если пользователь НЕ открывал поддержку (нет записи в memory_store),
-        # то просто игнорируем его сообщение.
         if get_real_id(user.fake_id) is None:
             return
 
@@ -202,7 +179,7 @@ async def support_messages(message: Message):
             ticket = res.scalars().first()
 
             if not ticket:
-                ticket = SupportTicket(user_id=user.id, is_open=True)
+                ticket = SupportTicket(user.id, is_open=True)
                 session.add(ticket)
 
             ticket.last_message = message.text
