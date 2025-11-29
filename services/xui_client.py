@@ -93,12 +93,11 @@ async def create_xui_client(fake_id: int, expiry_ts: int, tag: str, inbound_id: 
             "flow": "xtls-rprx-vision",
         }
 
-        # ✔️ Правильный POST-запрос
         resp = await client.post(
             "/panel/api/inbounds/addClient",
             json={
                 "id": inbound_id,
-                "client": client_js,   # главный фикс
+                "client": client_js,   
             },
         )
 
@@ -112,7 +111,6 @@ async def create_xui_client(fake_id: int, expiry_ts: int, tag: str, inbound_id: 
         except:
             pass
 
-        # build config
         vless = build_vless(uid, host, port, tag, fake_id, pbk, sid)
 
         return {
