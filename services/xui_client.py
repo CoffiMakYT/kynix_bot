@@ -97,7 +97,11 @@ async def create_xui_client(fake_id: int, expiry_ts: int, tag: str, inbound_id: 
             "/panel/api/inbounds/addClient",
             json={
                 "id": inbound_id,
-                "client": client_js,   
+                "remark": "",
+                "enable": True,
+                "expiryTime": expiry_ts,
+                "totalGB": 0,
+                "client": client_js,  # клиент внутри ключа client
             },
         )
 
