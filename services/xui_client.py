@@ -40,17 +40,20 @@ def get_base_host():
 def build_vless(uid, host, port, tag, fake_id, pbk, sid):
     return (
         f"vless://{uid}@{host}:{port}"
-        f"?type=tcp"
+        f"?type=xhttp"
         f"&encryption=none"
+        f"&path=%2Fnews"
+        f"&host=quad9.net"
+        f"&mode=auto"
         f"&security=reality"
         f"&pbk={pbk}"
         f"&fp=chrome"
         f"&sni=google.com"
         f"&sid={sid}"
         f"&spx=%2F"
-        f"&flow=xtls-rprx-vision"
         f"#Kynix-VPN-{tag}-{fake_id}"
     )
+
 
 async def create_xui_client(fake_id: int, expiry_ts: int, tag: str, inbound_id: int):
     async with httpx.AsyncClient(base_url=settings.XUI_BASE_URL) as client:
