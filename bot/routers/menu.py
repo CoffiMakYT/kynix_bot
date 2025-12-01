@@ -1,4 +1,4 @@
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.types import (
     Message,
     CallbackQuery,
@@ -22,11 +22,8 @@ from services.xui_client import delete_xui_client
 
 from config import ADMINS, settings
 
-from db.base import async_session
-from db.models import SupportTicket
-from security.memory_store import remember_support_user
 
-router = Router(name="menu")
+router = Router()
 
 
 def main_menu_kb():
@@ -35,13 +32,6 @@ def main_menu_kb():
         [InlineKeyboardButton(text="Proxy", callback_data="menu_proxy")],
         [InlineKeyboardButton(text="Профиль", callback_data="menu_profile")],
         [InlineKeyboardButton(text="Support", callback_data="menu_support")],
-    ])
-
-
-def plus_menu_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Купить", callback_data="menu_buy_plus")],
-        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu_home")],
     ])
 
 
@@ -64,72 +54,6 @@ def proxy_menu_kb():
     ])
 
 
-def support_menu_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Закрыть обращение", callback_data="support_close_user")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="menu_home")]
-    ])
-
-
-@router.callback_query(F.data == "menu_support")
-async def menu_support(call: CallbackQuery):
-    await call.answer()
-
-    real_id = call.from_user.id
-    user = await get_or_create_user(real_id)
-
-    remember_support_user(user.fake_id, real_id)
-
-    async with async_session() as session:
-        from sqlalchemy import select
-
-        q = select(SupportTicket).where(
-            SupportTicket.user_id == user.id,
-            SupportTicket.is_open.is_(True),
-        )
-        res = await session.execute(q)
-        ticket = res.scalars().first()
-
-        new_ticket_created = False
-        if not ticket:
-            ticket = SupportTicket(user_id=user.id, is_open=True)
-            session.add(ticket)
-            await session.commit()
-            await session.refresh(ticket)
-            new_ticket_created = True
-
-    text = (
-        "🛠 <b>Поддержка</b>\n\n"
-        "Опишите вашу проблему в сообщении.\n"
-        "Ваши сообщения будут отправлены администратору.\n\n"
-        "Если вопрос решён — закройте обращение кнопкой ниже."
-    )
-
-    try:
-        if call.message.text:
-            await call.message.edit_text(text, reply_markup=support_menu_kb())
-        elif call.message.caption:
-            await call.message.edit_caption(
-                caption=text,
-                reply_markup=support_menu_kb()
-            )
-        else:
-            await call.message.answer(text, reply_markup=support_menu_kb())
-    except Exception:
-        await call.message.answer(text, reply_markup=support_menu_kb())
-
-    if new_ticket_created:
-        text_admin = f"""📩 Обращение в поддержку
-FAKE ID: {user.fake_id}
-Ticket ID: {ticket.id}
-"""
-        for admin_id in settings.ADMINS:
-            try:
-                await call.message.bot.send_message(admin_id, text_admin)
-            except Exception:
-                pass
-
-
 @router.message(F.text == "/start")
 async def cmd_start(message: Message):
     user = await get_or_create_user(message.from_user.id)
@@ -140,9 +64,9 @@ async def cmd_start(message: Message):
         "<b>Добро пожаловать в Kynix VPN 💜</b>\n\n"
         "<b>📦 Тарифный план:</b>\n\n"
         "<b>Plus</b>\n"
-        "• Безлимитный трафик\n"
-        "• 10 устройств\n"
-        "• Цена: 100⭐ / месяц\n\n"
+        "- Безлимитный трафик\n"
+        "- 10 устройств\n"
+        "- Цена: 100⭐ / месяц\n\n"
         f"Ваш Fake ID: <code>{user.fake_id}</code>"
     )
 
@@ -166,7 +90,12 @@ async def menu_plus(call: CallbackQuery):
         "Цена: 100⭐ / месяц"
     )
 
-    await call.message.answer_photo(photo, caption=text, reply_markup=plus_menu_kb())
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Купить", callback_data="menu_buy_plus")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu_home")],
+    ])
+
+    await call.message.answer_photo(photo, caption=text, reply_markup=kb)
     await call.message.delete()
 
 
@@ -240,12 +169,27 @@ async def menu_profile(call: CallbackQuery):
 
     text = (
         "<b>Ваш профиль</b>\n\n"
-        f"• FakeID: <code>{user.fake_id}</code>\n"
-        f"• Тип подписки: {sub_type}\n"
-        f"• Срок окончания: {expires}"
+        f"- FakeID: <code>{user.fake_id}</code>\n"
+        f"- Тип подписки: {sub_type}\n"
+        f"- Срок окончания: {expires}"
     )
 
     await call.message.answer_photo(photo, caption=text, reply_markup=profile_menu_kb())
+    await call.message.delete()
+
+
+@router.callback_query(F.data == "menu_support")
+async def menu_support(call: CallbackQuery):
+    await call.answer()
+
+    photo = FSInputFile("images/support.jpg")
+    text = "✉️ <b>Поддержка</b>\n\nМы всегда на связи 💜"
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="menu_home")]]
+    )
+
+    await call.message.answer_photo(photo, caption=text, reply_markup=kb)
     await call.message.delete()
 
 
@@ -323,9 +267,9 @@ async def cmd_refund(message: Message):
     if result.get("ok"):
         return await message.answer(
             "✅ Возврат выполнен!\n"
-            "• Конфиг удалён\n"
-            "• Подписка деактивирована\n"
-            "• Средства возвращены пользователю"
+            "- Конфиг удалён\n"
+            "- Подписка деактивирована\n"
+            "- Средства возвращены пользователю"
         )
     else:
         desc = result.get("description", "Неизвестная ошибка Telegram")
@@ -345,9 +289,9 @@ async def menu_home(call: CallbackQuery):
     text = (
         "<b>Добро пожаловать в Kynix VPN 💜</b>\n\n"
         "<b>Plus</b>\n"
-        "• Безлимитный VPN\n"
-        "• 10 устройств\n"
-        "• Цена: 100⭐ / месяц\n\n"
+        "- Безлимитный VPN\n"
+        "- 10 устройств\n"
+        "- Цена: 100⭐ / месяц\n\n"
         f"Ваш FakeID: <code>{user.fake_id}</code>"
     )
 
