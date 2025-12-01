@@ -10,12 +10,7 @@ logger = logging.getLogger("xui_client")
 
 class XuiError(Exception):
     pass
-
-
-# ============================
-# LOGIN
-# ============================
-
+    
 async def xui_login(client: httpx.AsyncClient):
     resp = await client.post(
         "/login",
@@ -24,11 +19,6 @@ async def xui_login(client: httpx.AsyncClient):
     )
     if resp.status_code != 200:
         raise XuiError(f"Failed to login: {resp.text}")
-
-
-# ============================
-# GET INBOUND BY ID
-# ============================
 
 async def get_inbound(client: httpx.AsyncClient, inbound_id: int):
     resp = await client.get("/panel/api/inbounds/list")
@@ -41,11 +31,6 @@ async def get_inbound(client: httpx.AsyncClient, inbound_id: int):
             return inbound
 
     raise XuiError(f"Inbound {inbound_id} not found")
-
-
-# ============================
-# BUILD VLESS REALITY LINK
-# ============================
 
 def build_vless(uid, host, port, tag, fake_id, pbk, sid):
     return (
@@ -62,18 +47,11 @@ def build_vless(uid, host, port, tag, fake_id, pbk, sid):
         f"#Kynix-VPN-{tag}-{fake_id}"
     )
 
-
-# ============================
-# ADD CLIENT
-# ============================
-
 async def create_xui_client(fake_id: int, expiry_ts: int, tag: str, inbound_id: int):
     async with httpx.AsyncClient(base_url=settings.XUI_BASE_URL) as client:
 
-        # login
         await xui_login(client)
 
-        # inbound info
         inbound = await get_inbound(client, inbound_id)
 
         stream_obj = json.loads(inbound["streamSettings"])
@@ -85,7 +63,6 @@ async def create_xui_client(fake_id: int, expiry_ts: int, tag: str, inbound_id: 
         host = inbound.get("listen") or inbound.get("address") or "localhost"
         port = inbound["port"]
 
-        # client values
         uid = str(uuid.uuid4())
         subid = uuid.uuid4().hex[:16]
         email = f"{fake_id}"
@@ -102,7 +79,6 @@ async def create_xui_client(fake_id: int, expiry_ts: int, tag: str, inbound_id: 
             "flow": "xtls-rprx-vision",
         }
 
-        # Send request to add client
         resp = await client.post(
             "/panel/api/inbounds/addClient",
             json={
@@ -121,7 +97,6 @@ async def create_xui_client(fake_id: int, expiry_ts: int, tag: str, inbound_id: 
         except:
             pass
 
-        # Build final VLESS
         vless = build_vless(uid, host, port, tag, fake_id, pbk, sid)
 
         return {
@@ -130,11 +105,6 @@ async def create_xui_client(fake_id: int, expiry_ts: int, tag: str, inbound_id: 
             "email": email,
             "vless": vless,
         }
-
-
-# ============================
-# CREATE PLUS
-# ============================
 
 async def create_client_for_user(fake_id: int, days: int):
     expiry_ts = int(time.time() * 1000 + days * 86400 * 1000)
@@ -148,10 +118,6 @@ async def create_client_for_user(fake_id: int, days: int):
     )
 
 
-# ============================
-# CREATE INFINITE
-# ============================
-
 async def create_client_inf(fake_id: int):
     inbound_inf = int(settings.XUI_INBOUND_ID_INF)
 
@@ -162,33 +128,18 @@ async def create_client_inf(fake_id: int):
         inbound_id=inbound_inf,
     )
 
-# ============================
-# DELETE CLIENT BY EMAIL
-# ============================
-
 async def delete_xui_client(email: str, inbound_id: int | None = None):
-    """
-    Удаляет клиента из inbound по email.
-
-    email      – строка, у тебя это str(fake_id)
-    inbound_id – если None, используем основной PLUS-inbound из настроек.
-                 Для бесконечного можно передать settings.XUI_INBOUND_ID_INF.
-    """
 
     inbound_id = inbound_id or int(settings.XUI_INBOUND_ID)
 
     async with httpx.AsyncClient(base_url=settings.XUI_BASE_URL) as client:
-        # Логинимся
         await xui_login(client)
 
-        # Забираем inbound по id
         inbound = await get_inbound(client, inbound_id)
-
-        # В настройках inbound лежат клиенты
+        
         settings_obj = json.loads(inbound["settings"])
         clients = settings_obj.get("clients", [])
 
-        # Ищем клиента по email (у тебя email = f"{fake_id}")
         client_to_delete = next(
             (c for c in clients if str(c.get("email")) == str(email)),
             None,
@@ -197,15 +148,12 @@ async def delete_xui_client(email: str, inbound_id: int | None = None):
         if client_to_delete is None:
             raise XuiError(f"Client {email} not found in inbound {inbound_id}")
 
-        # В X-UI поле с uuid клиента обычно id
         client_uuid = client_to_delete.get("id") or client_to_delete.get("uuid")
         if not client_uuid:
             raise XuiError(
                 f"Client {email} in inbound {inbound_id} has no 'id'/'uuid' field"
             )
-
-        # Тот самый эндпоинт:
-        # http://{{HOST}}:{{PORT}}{{WEBBASEPATH}}/panel/api/inbounds/{inboundId}/delClient/{uuid}
+            
         resp = await client.post(
             f"/panel/api/inbounds/{inbound_id}/delClient/{client_uuid}"
         )
@@ -215,11 +163,11 @@ async def delete_xui_client(email: str, inbound_id: int | None = None):
 
         try:
             j = resp.json()
-            # Если X-UI вернёт success=false — тоже считаем ошибкой
+
             if isinstance(j, dict) and not j.get("success", True):
                 raise XuiError(f"deleteClient rejected: {resp.text}")
         except Exception:
-            # на всякий случай не падаем на кривом JSON
+
             pass
 
         logger.info(
