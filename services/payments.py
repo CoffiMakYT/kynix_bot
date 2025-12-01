@@ -77,9 +77,11 @@ async def handle_successful_payment(bot: Bot, message: Message, user: User, tari
         await session.commit()
 
     await message.answer(
-        "✅ Подписка активирована!\n"
+ "✅ Подписка активирована!\n"
         "Вот ваш VPN-конфиг:\n\n"
         f"<code>{config_text}</code>"
+        "\n\n"
+        "- <a href=\"https://telegra.ph/Instrukciya-po-podklyucheniya-VPN-i-prilozheniya-06-23\">Инструкция по подключению Kynix VPN и приложения</a>"
     )
 
     from config import settings as _s
