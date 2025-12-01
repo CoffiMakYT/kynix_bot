@@ -156,10 +156,14 @@ async def menu_plus(call: CallbackQuery):
     photo = FSInputFile("images/plus.jpg")
     text = (
         "<b>Тариф Plus</b>\n\n"
-        "• Безлимитный трафик\n"
-        "• До 10 устройств\n"
-        "• Приоритетная поддержка\n"
-        "• Цена: 100⭐ / месяц"
+        "- Безлимитный трафик\n"
+        "- До 10 устройств\n"
+        "- Приоритетная поддержка\n\n"
+        "Нажатие на кнопку «Купить» или последующая покупка "
+        "подразумевает согласие с:\n"
+        "- <a href=\"https://telegra.ph/Politika-konfidencialnosti-Kynix-VPN-08-24\">Политикой конфиденциальности</a>\n"
+        "- <a href=\"https://telegra.ph/Pravila-ispolzovaniya-servisa-Kynix-VPN-02-03\">Правилами использования</a>\n\n"
+        "Цена: 100⭐ / месяц"
     )
 
     await call.message.answer_photo(photo, caption=text, reply_markup=plus_menu_kb())
