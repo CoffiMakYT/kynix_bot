@@ -35,6 +35,14 @@ def main_menu_kb():
     ])
 
 
+def plus_menu_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Купить", callback_data="menu_buy_plus")],
+        [InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_buy_plus")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu_home")],
+    ])
+
+
 def profile_menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu_home")],
@@ -90,12 +98,7 @@ async def menu_plus(call: CallbackQuery):
         "Цена: 100⭐ / месяц"
     )
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Купить", callback_data="menu_buy_plus")],
-        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu_home")],
-    ])
-
-    await call.message.answer_photo(photo, caption=text, reply_markup=kb)
+    await call.message.answer_photo(photo, caption=text, reply_markup=plus_menu_kb())
     await call.message.delete()
 
 
@@ -122,6 +125,10 @@ async def menu_buy_plus(call: CallbackQuery):
 
     tariff = TARIFFS[0]
 
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_buy_plus")],
+    ])
+
     await call.message.answer_invoice(
         title=f"Kynix VPN — {tariff.title}",
         description=tariff.description,
@@ -129,7 +136,14 @@ async def menu_buy_plus(call: CallbackQuery):
         provider_token="",
         currency="XTR",
         prices=build_prices(tariff),
+        reply_markup=kb,
     )
+
+
+@router.callback_query(F.data == "cancel_buy_plus")
+async def cancel_buy_plus(call: CallbackQuery):
+    await call.answer("Покупка отменена.")
+    await call.message.delete()
 
 
 @router.pre_checkout_query()
