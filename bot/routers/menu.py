@@ -1,4 +1,4 @@
-from aiogram import Router, F, Bot
+from aiogram import Router, F
 from aiogram.types import (
     Message,
     CallbackQuery,
@@ -22,8 +22,11 @@ from services.xui_client import delete_xui_client
 
 from config import ADMINS, settings
 
+from db.base import async_session
+from db.models import SupportTicket
+from security.memory_store import remember_support_user
 
-router = Router()
+router = Router(name="menu")
 
 
 def main_menu_kb():
@@ -62,6 +65,72 @@ def proxy_menu_kb():
     ])
 
 
+def support_menu_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Закрыть обращение", callback_data="support_close_user")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="menu_home")]
+    ])
+
+
+@router.callback_query(F.data == "menu_support")
+async def menu_support(call: CallbackQuery):
+    await call.answer()
+
+    real_id = call.from_user.id
+    user = await get_or_create_user(real_id)
+
+    remember_support_user(user.fake_id, real_id)
+
+    async with async_session() as session:
+        from sqlalchemy import select
+
+        q = select(SupportTicket).where(
+            SupportTicket.user_id == user.id,
+            SupportTicket.is_open.is_(True),
+        )
+        res = await session.execute(q)
+        ticket = res.scalars().first()
+
+        new_ticket_created = False
+        if not ticket:
+            ticket = SupportTicket(user_id=user.id, is_open=True)
+            session.add(ticket)
+            await session.commit()
+            await session.refresh(ticket)
+            new_ticket_created = True
+
+    text = (
+        "🛠 <b>Поддержка</b>\n\n"
+        "Опишите вашу проблему в сообщении.\n"
+        "Ваши сообщения будут отправлены администратору.\n\n"
+        "Если вопрос решён — закройте обращение кнопкой ниже."
+    )
+
+    try:
+        if call.message.text:
+            await call.message.edit_text(text, reply_markup=support_menu_kb())
+        elif call.message.caption:
+            await call.message.edit_caption(
+                caption=text,
+                reply_markup=support_menu_kb()
+            )
+        else:
+            await call.message.answer(text, reply_markup=support_menu_kb())
+    except Exception:
+        await call.message.answer(text, reply_markup=support_menu_kb())
+
+    if new_ticket_created:
+        text_admin = f"""📩 Обращение в поддержку
+FAKE ID: {user.fake_id}
+Ticket ID: {ticket.id}
+"""
+        for admin_id in settings.ADMINS:
+            try:
+                await call.message.bot.send_message(admin_id, text_admin)
+            except Exception:
+                pass
+
+
 @router.message(F.text == "/start")
 async def cmd_start(message: Message):
     user = await get_or_create_user(message.from_user.id)
@@ -90,12 +159,8 @@ async def menu_plus(call: CallbackQuery):
         "<b>Тариф Plus</b>\n\n"
         "- Безлимитный трафик\n"
         "- До 10 устройств\n"
-        "- Приоритетная поддержка\n\n"
-        "Нажатие на кнопку «Купить» или последующая покупка "
-        "подразумевает согласие с:\n"
-        "- <a href=\"https://telegra.ph/Politika-konfidencialnosti-Kynix-VPN-08-24\">Политикой конфиденциальности</a>\n"
-        "- <a href=\"https://telegra.ph/Pravila-ispolzovaniya-servisa-Kynix-VPN-02-03\">Правилами использования</a>\n\n"
-        "Цена: 100⭐ / месяц"
+        "- Приоритетная поддержка\n"
+        "- Цена: 100⭐ / месяц"
     )
 
     await call.message.answer_photo(photo, caption=text, reply_markup=plus_menu_kb())
@@ -143,7 +208,10 @@ async def menu_buy_plus(call: CallbackQuery):
 @router.callback_query(F.data == "cancel_buy_plus")
 async def cancel_buy_plus(call: CallbackQuery):
     await call.answer("Покупка отменена.")
-    await call.message.delete()
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
 
 
 @router.pre_checkout_query()
@@ -189,21 +257,6 @@ async def menu_profile(call: CallbackQuery):
     )
 
     await call.message.answer_photo(photo, caption=text, reply_markup=profile_menu_kb())
-    await call.message.delete()
-
-
-@router.callback_query(F.data == "menu_support")
-async def menu_support(call: CallbackQuery):
-    await call.answer()
-
-    photo = FSInputFile("images/support.jpg")
-    text = "✉️ <b>Поддержка</b>\n\nМы всегда на связи 💜"
-
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="menu_home")]]
-    )
-
-    await call.message.answer_photo(photo, caption=text, reply_markup=kb)
     await call.message.delete()
 
 
