@@ -2,12 +2,15 @@ import asyncio
 import logging
 import os
 from contextlib import suppress
+
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
+
 from config import settings
 from security.integrity import verify_project_integrity
 from security.memory_store import start_schedulers
+
 from bot.routers.menu import router as menu_router
 from bot.routers.payment import router as payments_router
 from bot.routers.support import router as support_router
@@ -21,12 +24,14 @@ logging.basicConfig(
 logger = logging.getLogger("kynix_bot")
 
 
-async def notify_admins_integrity_failed(bot: Bot, current_hash: str) -> None:
+async def notify_admins_integrity_failed(bot: Bot, current_hash: str, reason: str | None = None) -> None:
     text = (
-        "⚠️ Обнаружено изменение исходного кодa бота.\n"
+        "⚠️ Обнаружено изменение или некорректная конфигурация исходного кода бота.\n"
         "Бот остановлен из соображений безопасности.\n"
-        f"Текущий хэш: <code>{current_hash}</code>"
     )
+    if reason:
+        text += f"\nТекущий хэш: <code>{current_hash}</code>"
+
     for admin_id in settings.ADMINS:
         with suppress(Exception):
             await bot.send_message(admin_id, text)
@@ -46,13 +51,22 @@ async def main() -> None:
 
     current_hash = verify_project_integrity(base_path=os.path.dirname(__file__))
 
-    if settings.CODE_HASH and current_hash != settings.CODE_HASH:
+    code_hash = (settings.CODE_HASH or "").strip()
+
+    if not code_hash:
+        reason = "CODE_HASH не задан или пустой"
         logger.error(
-            "Integrity check failed. Expected %s, got %s",
-            settings.CODE_HASH,
-            current_hash
+            "%s. Бот остановлен из соображений безопасности. Текущий хэш проекта: %s",
+            reason,
+            current_hash,
         )
-        await notify_admins_integrity_failed(bot, current_hash)
+        await notify_admins_integrity_failed(bot, current_hash, reason)
+        return
+
+    if current_hash != code_hash:
+        reason = f"Integrity check failed. Expected {code_hash}, got {current_hash}"
+        logger.error(reason)
+        await notify_admins_integrity_failed(bot, current_hash, reason)
         return
 
     start_schedulers()
